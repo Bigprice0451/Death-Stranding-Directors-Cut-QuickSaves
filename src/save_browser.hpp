@@ -8,6 +8,7 @@ namespace qs {
 class Session;
 class ThumbnailCache;
 using SetSaveCapacity = std::function<void(Shelf,unsigned,const std::shared_ptr<const std::vector<Entry>> &)>;
+void load_browser_layout(reshade::api::effect_runtime *runtime);
 
 // Draw on the overlay thread. The session supplies an immutable snapshot and
 // owns every load/write. Changing a widget alone never removes an archive.

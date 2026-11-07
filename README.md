@@ -1,6 +1,8 @@
 # Death Stranding Director's Cut QuickSaves
 
-Version 0.2.0 supports the Windows Steam build 13300582. Extract the contents of the release ZIP beside ds.exe. The package includes a full add-on-enabled ReShade 6.8.0 runtime built from the upstream source. [Player instructions](release_assets/READ%20ME.txt) cover installation, the controls, diagnostics, and removal.
+Version 0.2.1 supports the Windows Steam build 13300582. Extract the contents of the release ZIP beside ds.exe. The package includes a full add-on-enabled ReShade 6.8.0 runtime built from the upstream source. [Player instructions](release_assets/READ%20ME.txt) cover installation, the controls, diagnostics, and removal.
+
+Quick Saves and Auto Save share one overlay. Drag the grip below either list to set its height. Each height is saved in ReShade.ini. Widen the overlay to place the lists side by side and drag the center divider to adjust their widths. Narrow overlays stack the lists.
 
 ## Controls and storage
 
@@ -56,4 +58,6 @@ The release add-on is **build\\Release\\DirectorCutQuickSaves.addon64**. Use the
 
 ## Source download
 
-Extract the source ZIP into a working folder and run the rebuild commands above. The source includes the mod, updater, tests, build files and the dependency headers needed to compile them. To recreate the player ZIP, take `dxgi.dll` from the matching player release or build the pinned upstream ReShade revision in the packaging notes. To export this source snapshot again from a Git checkout, run `git archive --format=zip --prefix=QuickSaves-0.2.0-Source/ -o "Death Stranding Directors Cut - QuickSaves 0.2.0 - Source.zip" v0.2.0`.
+To exercise the resize grips, divider, narrow layout and save controls without launching the game, configure CMake with `-DIMGUI_TEST_SOURCE_DIR="<ReShade 6.8.0 checkout>/deps/imgui"`. Use the upstream checkout with its submodules initialized. Rebuild and run CTest as above to include the overlay interaction test.
+
+Extract the source ZIP into a working folder and run the rebuild commands above. The source includes the mod, updater, tests, build files and the dependency headers needed to compile them. To recreate the player ZIP, take `dxgi.dll` from the matching player release or build the pinned upstream ReShade revision in the packaging notes. To export this source snapshot again from a Git checkout, run `git archive --format=zip --prefix=QuickSaves-0.2.1-Source/ -o "Death Stranding Directors Cut - QuickSaves 0.2.1 - Source.zip" v0.2.1`.

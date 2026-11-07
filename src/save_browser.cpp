@@ -8,6 +8,7 @@
 #include <imgui.h>
 #include <reshade.hpp>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <optional>
 
@@ -36,6 +37,28 @@ struct Draft {
 };
 struct CapacityChange { Shelf shelf; unsigned keep; };
 
+// Heights are measured in text lines so a saved layout follows ReShade's font scale.
+// A zero preference uses the responsive default until the player moves the grip.
+struct ShelfHeight { float lines{}, drag_start{}; };
+ShelfHeight manual_height, auto_height;
+const char *height_key(Shelf shelf) { return shelf==Shelf::manual ? "QuickListHeight" : "AutoListHeight"; }
+
+void height_grip(Runtime *runtime,Shelf shelf,ShelfHeight &setting,float height,float line,float maximum) {
+    ImGui::InvisibleButton("##resize-height",{std::max(1.f,ImGui::GetContentRegionAvail().x),line});
+    const bool hovered=ImGui::IsItemHovered(),active=ImGui::IsItemActive();
+    const auto lo=ImGui::GetItemRectMin(),hi=ImGui::GetItemRectMax();
+    const float x=(lo.x+hi.x)*.5f,y=(lo.y+hi.y)*.5f,half=std::min(2.f*line,(hi.x-lo.x)*.4f);
+    const auto color=ImGui::GetColorU32(active?ImGuiCol_SliderGrabActive:hovered?ImGuiCol_Text:ImGuiCol_SliderGrab);
+    ImGui::GetWindowDrawList()->AddLine({x-half,y},{x+half,y},color,3.f);
+    if(hovered || active) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+    if(hovered && !active) ImGui::SetTooltip("Drag to resize this list");
+    if(ImGui::IsItemActivated()) setting.drag_start=height;
+    if(active && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+        setting.lines=std::clamp(setting.drag_start+ImGui::GetMouseDragDelta().y,5.f*line,maximum)/line;
+    if(runtime && ImGui::IsItemDeactivated() && setting.lines>0)
+        reshade::set_config_value(runtime,"DirectorCutQuickSaves",height_key(shelf),setting.lines);
+}
+
 std::string title(const Entry &entry) {
     // Older records use the same description for both libraries.
     std::string text=entry.info.title;
@@ -61,7 +84,10 @@ std::string local_time(uint64_t timestamp) {
     return out;
 }
 bool header(Shelf shelf,const View &view) {
+    const auto padding=ImGui::GetStyle().FramePadding;
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,{padding.x,ImGui::GetTextLineHeight()*.45f});
     const bool open=ImGui::CollapsingHeader(shelf_name(shelf),ImGuiTreeNodeFlags_DefaultOpen);
+    ImGui::PopStyleVar();
     char count[32];
     std::snprintf(count,sizeof(count),"%zu / %u",entries(view,shelf).size(),capacity(view,shelf));
     const auto left=ImGui::GetItemRectMin(),right=ImGui::GetItemRectMax();
@@ -98,21 +124,20 @@ void text_line(ImVec2 pos,float width,const std::string &text,ImGuiCol color) {
     draw->AddText(ImGui::GetFont(),ImGui::GetFontSize(),pos,ink,line.c_str(),nullptr,0,&clip);
 }
 void cards(Runtime *runtime,Session &session,ThumbnailCache &cache,const View &view,Shelf shelf,
-           std::optional<Entry> &clicked) {
+           bool wide,std::optional<Entry> &clicked) {
     const auto &items=entries(view,shelf);
     if(damaged(view,shelf))
         ImGui::TextWrapped("%u unreadable %s",damaged(view,shelf),damaged(view,shelf)==1?"save":"saves");
-    if(items.empty()) {
-        ImGui::TextDisabled(shelf==Shelf::manual ? "No Quick Saves yet." : "No Auto Saves yet.");
-        return;
-    }
     const auto &style=ImGui::GetStyle();
     const float line=ImGui::GetTextLineHeight(),gap=style.ItemSpacing.y;
-    const float row_height=3*line+2*style.FramePadding.y;
-    // Cap each list's height so opening a full manual library leaves the timer reachable.
-    const float rows=std::min(2.5f,static_cast<float>(items.size()));
-    const float height=rows*(row_height+gap)-gap;
-    if(ImGui::BeginChild("rows",{0,height})) {
+    const float row_height=std::clamp(ImGui::GetContentRegionAvail().x*.13f,4.5f*line,7.f*line);
+    auto &setting=shelf==Shelf::manual ? manual_height : auto_height;
+    const float panel_height=ImGui::GetWindowHeight();
+    const float maximum=std::max(5.f*line,panel_height*.85f);
+    const float default_height=std::max(8.f*line,panel_height*(wide?.54f:.26f));
+    const float height=std::clamp(setting.lines>0?setting.lines*line:default_height,5.f*line,maximum);
+    if(ImGui::BeginChild("rows",{0,height},ImGuiChildFlags_Borders)) {
+        if(items.empty()) ImGui::TextDisabled(shelf==Shelf::manual ? "No Quick Saves yet." : "No Auto Saves yet.");
         for(const Entry &entry:items) {
             ImGui::PushID(static_cast<int>(entry.slot));
             const ImVec2 at=ImGui::GetCursorScreenPos();
@@ -149,6 +174,7 @@ void cards(Runtime *runtime,Session &session,ThumbnailCache &cache,const View &v
         }
     }
     ImGui::EndChild();
+    height_grip(runtime,shelf,setting,height,line,maximum);
 }
 void auto_settings(const View &view,Draft &interval,const std::function<void(bool,int)> &configure) {
     bool enabled=view.auto_enabled;
@@ -206,6 +232,17 @@ bool still_current(const View &view,const Entry &selected) {
 }
 }
 
+void load_browser_layout(Runtime *runtime) {
+    for(Shelf shelf:{Shelf::manual,Shelf::timed}) {
+        auto &setting=shelf==Shelf::manual ? manual_height : auto_height;
+        setting={};
+        float lines{};
+        if(reshade::get_config_value(runtime,"DirectorCutQuickSaves",height_key(shelf),lines) &&
+           std::isfinite(lines) && lines>0)
+            setting.lines=lines;
+    }
+}
+
 void draw_save_browser(Runtime *runtime,Session &session,ThumbnailCache &thumbnails,bool can_save,
                        const std::function<void()> &capture_manual,const std::function<void(bool,int)> &configure_auto,
                        const SetSaveCapacity &configure_capacity) {
@@ -219,7 +256,12 @@ void draw_save_browser(Runtime *runtime,Session &session,ThumbnailCache &thumbna
     std::optional<Entry> clicked;
     std::optional<CapacityChange> change;
     ImGui::Spacing();
+    // Use the dock's actual width. An ultrawide screen can still have a narrow overlay.
+    const bool wide=ImGui::GetContentRegionAvail().x>=ImGui::GetFontSize()*68.f &&
+        ImGui::BeginTable("Save shelves",2,ImGuiTableFlags_Resizable|ImGuiTableFlags_BordersInnerV|
+                          ImGuiTableFlags_SizingStretchSame|ImGuiTableFlags_PadOuterX);
     for(Shelf shelf:{Shelf::manual,Shelf::timed}) {
+        if(wide) ImGui::TableNextColumn();
         ImGui::PushID(static_cast<int>(shelf));
         if(header(shelf,view)) {
             if(shelf==Shelf::manual) {
@@ -233,10 +275,11 @@ void draw_save_browser(Runtime *runtime,Session &session,ThumbnailCache &thumbna
                 draw_quick_keys(runtime);
             } else auto_settings(view,interval,configure_auto);
             retention(view,shelf,shelf==Shelf::manual?manual_draft:auto_draft,change);
-            cards(runtime,session,thumbnails,view,shelf,clicked);
+            cards(runtime,session,thumbnails,view,shelf,wide,clicked);
         }
         ImGui::Spacing(); ImGui::PopID();
     }
+    if(wide) ImGui::EndTable();
     if(!view.message.empty()) ImGui::TextWrapped("%s",view.message.c_str());
     if(ImGui::TreeNode("Diagnostics")) {
         const auto path=telemetry().current().u8string();

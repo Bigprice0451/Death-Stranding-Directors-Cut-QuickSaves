@@ -43,6 +43,7 @@ void runtime_start(Runtime *rt) {
     DWORD pid=0; auto thread=GetWindowThreadProcessId(window,&pid);
     if(!thread || pid!=GetCurrentProcessId()) return;
     owner=rt; game_window=window;
+    qs::load_browser_layout(rt);
     if(!attached) { session.attach(); attached=true; }
     else if(session.supported()) session.runtime_reopened();
     if(!session.supported()) return;
