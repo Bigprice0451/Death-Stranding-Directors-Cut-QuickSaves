@@ -1,0 +1,2 @@
+# Preserve the exact bytes that ship with the release, including license hashes.
+/release_assets/*.txt -text

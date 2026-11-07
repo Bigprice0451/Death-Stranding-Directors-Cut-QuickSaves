@@ -1,0 +1,14 @@
+# Local build output, packaged downloads and playtest files stay off GitHub.
+/build/
+/release/
+/out/
+/.vs/
+**/__pycache__/
+*.user
+*.log
+*.jsonl
+*.addon64
+*.dll
+*.exe
+*.pdb
+*.zip

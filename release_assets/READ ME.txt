@@ -1,0 +1,52 @@
+DIRECTOR'S CUT QUICKSAVES   |   0.2.0
+For DEATH STRANDING DIRECTOR'S CUT, Steam PC build 13300582
+
+INSTALL
+Close the game. In Steam, right-click the game and choose Manage > Browse local
+files. Open the ZIP and drag its contents into the folder containing ds.exe.
+The full add-on build of ReShade 6.8.0 is included. Your existing ReShade
+settings and presets stay in place. If you already use a different dxgi.dll
+mod, check its instructions before replacing that file.
+
+QUICK SAVE
+Press F5 during gameplay. Press Home, open QuickSaves, and choose a thumbnail
+to load. If you changed ReShade's menu shortcut, use that key in place of Home.
+Under Quick Save keys, add a key or click an existing key to replace it.
+F5, C and B can all be assigned at once. Each works independently. The game
+can still receive the same key for its own controls.
+
+AUTO SAVE
+Expand Auto Save in the same menu, switch it on, and set 1–60 minutes.
+Each list has its own Keep last setting, from 1 to 100. Quick Save starts at
+100 and Auto Save at 15. Reducing a limit can retire the oldest entries.
+The two lists rotate independently. Normal Death Stranding saves still work.
+
+F5, Auto Save and mod loads are held during cutscenes and world transitions.
+After restarting, open a delivery in the matching game world before loading
+a mod entry. The saved thumbnail shows the moment the capture was requested.
+
+OPTIONAL GRAPHICS
+On an NVIDIA RTX GPU, set the game's NVIDIA DLSS option to Quality. In the
+QuickSaves menu, turn on Force DLAA + Preset K. This requests full-resolution
+DLAA and the K model together. The menu shows the actual render dimensions.
+Switch it off to restore the game's Quality sizing.
+
+If an update is needed, the switch downloads the NVIDIA-signed DLSS 310.9.16
+runtime directly from NVIDIA's GitHub repository. Wait for the ready message,
+exit the game once, and relaunch. Turning the switch off before exit cancels
+a pending upgrade. Once installed, the updated NVIDIA DLL remains available
+to regular DLSS too. The first upgrade requires internet and permission to
+write to the game folder. For a manual install, close the game and place the
+official x64 production DLL beside ds.exe. See THIRD-PARTY-NOTICES.txt.
+
+SAVES AND LOGS
+Fresh installs use Windows Saved Games\DirectorCutQuickSaves. The original
+playtest library on D: is reused when present. Diagnostics in the menu shows
+the exact log path. Save entries and logs are local to the PC.
+
+REMOVE
+Close the game. Remove DirectorCutQuickSaves.addon64 and this package's
+DirectorCutQuickSaves folder from beside ds.exe. Remove dxgi.dll only if you
+also want to remove ReShade. Steam's Verify integrity can restore the game's
+original NVIDIA DLL. Your save libraries stay in your Windows profile or
+existing playtest location.
