@@ -1,5 +1,6 @@
 #include "library.hpp"
 #include <windows.h>
+#include <winioctl.h>
 #include <bcrypt.h>
 #include <algorithm>
 #include <charconv>
@@ -111,10 +112,6 @@ Entry inspect_record(const Bytes &record,unsigned slot,uint64_t account,Shelf sh
     check(hash_bytes(data,static_cast<size_t>(h.size))==h.digest,"Quicksave failed its integrity check.");
     return {slot,h.sequence,h.saved_at,native_info(data,static_cast<size_t>(h.size)),h.digest,shelf,static_cast<uint32_t>(account)};
 }
-struct Inventory {
-    std::vector<Entry> healthy;
-    unsigned damaged=0, first_free=0;
-};
 Bytes read_handle(HANDLE file, size_t maximum) {
     LARGE_INTEGER size{};
     check(GetFileSizeEx(file,&size) && size.QuadPart>0 && static_cast<uint64_t>(size.QuadPart)<=maximum,"Unexpected save file size.");
@@ -123,35 +120,31 @@ Bytes read_handle(HANDLE file, size_t maximum) {
     check(ReadFile(file,data.data(),static_cast<DWORD>(data.size()),&count,nullptr) && count==data.size(),"Incomplete save file read.");
     return data;
 }
-Inventory scan(const Library &library,uint64_t account) {
-    Inventory result;
-    for(unsigned slot=1;slot<=slot_count(library.shelf());++slot) {
-        const auto file=library.path(slot);
-        auto attributes=GetFileAttributesW(file.c_str());
-        if(attributes==INVALID_FILE_ATTRIBUTES) {
-            const auto error=GetLastError();
-            if(error==ERROR_FILE_NOT_FOUND || error==ERROR_PATH_NOT_FOUND) {
-                if(!result.first_free) result.first_free=slot;
-            } else {
-                ++result.damaged; // Access denied is occupied, never free storage.
-            }
-            continue;
-        }
-        if(attributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) {
-            ++result.damaged;
-            continue;
-        }
-        try {
-            result.healthy.push_back(inspect_record(read_file(file),slot,account,library.shelf()));
-        } catch(const std::runtime_error &) {
-            // Skip only this numbered record. Keep its file untouched even when
-            // the ring is full so the player can investigate or recover it.
-            ++result.damaged;
-        }
-    }
-    std::sort(result.healthy.begin(),result.healthy.end(),
-              [](const Entry &a,const Entry &b){return a.sequence!=b.sequence ? a.sequence>b.sequence : a.slot<b.slot;});
-    return result;
+BY_HANDLE_FILE_INFORMATION regular_slot_info(HANDLE file) {
+    BY_HANDLE_FILE_INFORMATION info{};
+    check(GetFileInformationByHandle(file,&info) && !(info.dwFileAttributes &
+          (FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT)),"Not a regular quicksave file.");
+    return info;
+}
+Bytes read_slot_file(const fs::path &path) {
+    Handle file{CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,
+                            FILE_FLAG_OPEN_REPARSE_POINT,nullptr)};
+    check(file.h!=INVALID_HANDLE_VALUE,"Quicksave is busy or unavailable.");
+    regular_slot_info(file.h);
+    return read_handle(file.h,max_file+sizeof(Header));
+}
+uint64_t combined(DWORD high, DWORD low) { return (uint64_t(high)<<32)|low; }
+
+// The change journal can distinguish same-size edits even when a tool restores
+// the file's timestamp. A drive without a usable journal gets full checksums.
+uint64_t file_change_number(HANDLE file, uint64_t file_id) {
+    BYTE buffer[sizeof(USN_RECORD_V2)+MAX_PATH*sizeof(wchar_t)];
+    DWORD returned=0;
+    if(!DeviceIoControl(file,FSCTL_READ_FILE_USN_DATA,nullptr,0,buffer,sizeof buffer,&returned,nullptr) ||
+       returned<offsetof(USN_RECORD_V2,FileName)) return 0;
+    USN_RECORD_V2 record{};
+    std::memcpy(&record,buffer,offsetof(USN_RECORD_V2,FileName));
+    return record.MajorVersion==2 && record.FileReferenceNumber==file_id && record.Usn>0 ? record.Usn : 0;
 }
 
 // The same atomic file contains the new preference and the exact records the
@@ -270,6 +263,55 @@ void recover_policy(const Library &library, const fs::path &folder, uint32_t acc
     write_policy(folder,account,library.shelf(),p);
 }
 }
+struct Library::Inventory {
+    std::vector<Entry> healthy;
+    unsigned damaged=0, first_free=0;
+};
+Library::Inventory Library::scan(uint32_t account, Inspection inspection) const {
+    Inventory result;
+    for(unsigned slot=1;slot<=slot_count(shelf_);++slot) {
+        auto &cached=verified_[slot-1];
+        // Inspect the same open file for identity, change number and payload.
+        // Writers and renames are denied while we check; links are never followed.
+        const auto filename=path(slot);
+        Handle file{CreateFileW(filename.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,
+                                FILE_FLAG_OPEN_REPARSE_POINT,nullptr)};
+        if(file.h==INVALID_HANDLE_VALUE) {
+            const auto error=GetLastError();
+            cached={};
+            if(missing(error)) {
+                if(!result.first_free) result.first_free=slot;
+            } else {
+                ++result.damaged;
+            }
+            continue;
+        }
+        try {
+            const auto info=regular_slot_info(file.h);
+            const auto file_id=combined(info.nFileIndexHigh,info.nFileIndexLow);
+            const auto change=file_change_number(file.h,file_id);
+            const auto size=combined(info.nFileSizeHigh,info.nFileSizeLow);
+            const auto written=combined(info.ftLastWriteTime.dwHighDateTime,info.ftLastWriteTime.dwLowDateTime);
+            const bool reliable=file_id && change && info.dwVolumeSerialNumber;
+            if(inspection==Inspection::reuse_verified && reliable && cached.file_id==file_id &&
+               cached.volume==info.dwVolumeSerialNumber && cached.change_number==change &&
+               cached.size==size && cached.write_time==written) {
+                result.healthy.push_back(cached.entry);
+                continue;
+            }
+            auto entry=inspect_record(read_handle(file.h,max_file+sizeof(Header)),slot,account,shelf_);
+            if(reliable) cached={file_id,change,size,written,info.dwVolumeSerialNumber,entry};
+            else cached={};
+            result.healthy.push_back(std::move(entry));
+        } catch(const std::runtime_error &) {
+            cached={};
+            ++result.damaged;
+        }
+    }
+    std::sort(result.healthy.begin(),result.healthy.end(),
+              [](const Entry &a,const Entry &b){return a.sequence!=b.sequence ? a.sequence>b.sequence : a.slot<b.slot;});
+    return result;
+}
 bool valid_account(const std::string &s) {
     if(s.empty() || s.size()>10 || s[0]=='0') return false;
     uint32_t value=0; auto result=std::from_chars(s.data(),s.data()+s.size(),value);
@@ -293,7 +335,7 @@ Library::Library(const fs::path &root, std::string account, Shelf shelf, unsigne
         const auto id=static_cast<uint32_t>(std::stoul(account_));
         auto policy=load_policy(folder_,id,shelf_,initial_capacity_);
         if(!policy.persisted) {
-            check(scan(*this,id).healthy.size()<=requested,"Confirm the removal of existing saves before lowering retention.");
+            check(scan(id,Inspection::full).healthy.size()<=requested,"Confirm the removal of existing saves before lowering retention.");
             fs::create_directories(folder_);
             write_policy(folder_,id,shelf_,policy);
         }
@@ -312,7 +354,7 @@ std::vector<Entry> Library::list(unsigned *damaged) const {
         auto policy=load_policy(folder_,id,shelf_,initial_capacity_);
         recover_policy(*this,folder_,id,policy);
     } catch(const std::runtime_error &) {}
-    auto result=scan(*this,id);
+    auto result=scan(id,Inspection::full);
     if(damaged) *damaged=result.damaged;
     return std::move(result.healthy);
 }
@@ -324,7 +366,7 @@ Entry Library::store(const Bytes &native,uint64_t captured_at) const {
     const auto id=static_cast<uint32_t>(std::stoul(account_));
     auto policy=load_policy(folder_,id,shelf_,initial_capacity_);
     recover_policy(*this,folder_,id,policy);
-    const auto inventory=scan(*this,id);
+    const auto inventory=scan(id,Inspection::reuse_verified);
     const auto &entries=inventory.healthy;
     check(entries.size()<=policy.capacity,"More saves exist than the selected limit. Review this list's retention setting.");
     const uint64_t sequence=entries.empty()?1:entries.front().sequence+1;
@@ -354,8 +396,8 @@ Entry Library::store(const Bytes &native,uint64_t captured_at) const {
         if(replace_oldest) {
             // Another tool can edit a slot while our new file is being flushed.
             // Re-check the former oldest record before replacing it.
-            auto current=inspect_record(read_file(path(slot)),slot,h.account,shelf_);
-            check(current.sequence==entries.back().sequence && current.digest==entries.back().digest,
+            auto current=inspect_record(read_slot_file(path(slot)),slot,h.account,shelf_);
+            check(matches(identity(entries.back()),current),
                   "The oldest quicksave changed. Try saving again.");
             move_flags|=MOVEFILE_REPLACE_EXISTING;
         }
@@ -366,9 +408,9 @@ Entry Library::store(const Bytes &native,uint64_t captured_at) const {
 }
 Bytes Library::read(const Entry &selection) const {
     check(selection.shelf==shelf_ && selection.account==std::stoull(account_),"That quicksave belongs to another list or Steam account.");
-    auto all=read_file(path(selection.slot));
+    auto all=read_slot_file(path(selection.slot));
     const auto current=inspect_record(all,selection.slot,std::stoull(account_),shelf_);
-    check(current.sequence==selection.sequence && current.digest==selection.digest,"That quicksave changed. Refresh the list.");
+    check(matches(identity(selection),current),"That quicksave changed. Refresh the list.");
     Bytes native(all.begin()+sizeof(Header),all.end());
     return native;
 }
@@ -382,7 +424,7 @@ unsigned Library::set_capacity(unsigned requested,const std::vector<Entry> &expe
     const auto id=static_cast<uint32_t>(std::stoul(account_));
     auto policy=load_policy(folder_,id,shelf_,initial_capacity_);
     recover_policy(*this,folder_,id,policy);
-    const auto actual=scan(*this,id);
+    const auto actual=scan(id,Inspection::full);
     const char *changed="This save list changed. Refresh it and confirm the new removal count.";
     check(actual.healthy.size()==expected.size(),changed);
     std::array<const Entry *,limit+1> by_slot{};

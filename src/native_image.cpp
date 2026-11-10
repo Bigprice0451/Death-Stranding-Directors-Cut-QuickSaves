@@ -14,11 +14,27 @@ template<class T> T value_at(const Bytes& image, std::size_t offset) {
     std::memcpy(&result, image.data() + offset, sizeof result);
     return result;
 }
+std::array<unsigned char,16> payload_digest(const Bytes &image) {
+    if(image.size()<=native_header_size || image.size()>native_bank_size)
+        throw std::runtime_error("Invalid native snapshot length.");
+    std::array<unsigned char, 16> digest{};
+    auto* payload = const_cast<unsigned char*>(image.data() + native_header_size);
+    if (BCryptHash(BCRYPT_MD5_ALG_HANDLE, nullptr, 0, payload, static_cast<ULONG>(image.size()-native_header_size), digest.data(),
+                   static_cast<ULONG>(digest.size())) < 0)
+        throw std::runtime_error("Windows could not verify the native quicksave digest.");
+    return digest;
+}
+
 }
 
 std::uint16_t native_world_id(const Bytes& image) {
     if (image.size() < native_header_size) throw std::runtime_error("The quicksave header is incomplete.");
     return value_at<std::uint16_t>(image, 0x26);
+}
+
+void update_native_payload_digest(Bytes &image) {
+    const auto digest=payload_digest(image);
+    std::copy(digest.begin(),digest.end(),image.begin()+0x1ec);
 }
 
 void validate_native_image(const Bytes& image) {
@@ -40,11 +56,7 @@ void validate_native_image(const Bytes& image) {
     // The engine verifies MD5 at 0x3633F1E for disk files. Its memory route
     // trusts game-owned buffers, so perform that same check before submitting.
     // The library also checks a separate SHA-256 that covers the entire image.
-    std::array<unsigned char, 16> digest{};
-    auto* payload = const_cast<unsigned char*>(image.data() + native_header_size);
-    if (BCryptHash(BCRYPT_MD5_ALG_HANDLE, nullptr, 0, payload, length, digest.data(),
-                   static_cast<ULONG>(digest.size())) < 0)
-        throw std::runtime_error("Windows could not verify the native quicksave digest.");
+    const auto digest=payload_digest(image);
     if (!std::equal(digest.begin(), digest.end(), image.begin() + 0x1ec))
         throw std::runtime_error("The quicksave's native payload digest does not match.");
 }

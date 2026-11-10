@@ -68,6 +68,7 @@ private:
     Shelf source_=Shelf::manual;
     bool timed_capture_{};
     PostLoadCheck delivery_check_;
+    uint64_t vehicle_retry_until_{};
     int last_native_phase_=-1;
     std::mutex tracking_mutex_;
     bool tracker_started_{},tracking_attempted_{},listed_{};

@@ -61,7 +61,15 @@ Bytes pack_record(const PrivateRecord &record,const Bytes &png) {
     if(h.has_position) text<<std::fixed<<std::setprecision(1)<<"   Sam ("<<h.xyz[0]<<", "<<h.xyz[1]<<", "<<h.xyz[2]<<")";
     if(h.has_delivery) text<<"   Active orders: "<<h.active_orders;
     if(h.has_carried_count) text<<"   Carried cargo: "<<h.carried_count;
-    text<<"\r\n"; auto ini=text.str();
+    text<<"\r\n";
+    if(record.vehicle_seat) text<<"VehicleSeat = "<<*record.vehicle_seat<<"\r\n";
+    if(record.vehicle_cargo) {
+        const auto &cargo=*record.vehicle_cargo;
+        text<<"VehicleCargo = "<<cargo.vehicles<<' '<<cargo.items<<' '<<std::hex<<std::setfill('0');
+        for(auto b:cargo.digest) text<<std::setw(2)<<unsigned(b);
+        text<<"\r\n";
+    }
+    auto ini=text.str();
     Bytes result(24);
     put_length(result,0,ini.size()); put_length(result,8,png.size());
     put_length(result,16,sizeof h + sizeof(SceneStamp)*record.scenes.size()+record.image.size());
@@ -91,6 +99,38 @@ PrivateRecord unpack_record(const Bytes &archive) {
     if(bytes) std::memcpy(result.scenes.data(),archive.data()+offset,bytes);
     result.image.assign(archive.begin()+offset+bytes,archive.end());
     validate_native_image(result.image);
+    result.vehicles=inspect_vehicle_archive(result.image);
+    // This optional line keeps version 1 archives readable in both directions.
+    std::string_view info(reinterpret_cast<const char*>(archive.data()+24),get_length(archive,0));
+    constexpr std::string_view label="\r\nVehicleSeat = ";
+    const auto start=info.find(label);
+    if(start!=info.npos) {
+        const auto text=info.substr(start+label.size());
+        const auto eol=text.find("\r\n");
+        uint32_t id{};
+        if(eol!=text.npos) {
+            const auto parsed=std::from_chars(text.data(),text.data()+eol,id);
+            if(parsed.ec==std::errc{} && parsed.ptr==text.data()+eol) result.vehicle_seat=id;
+        }
+    }
+    constexpr std::string_view cargo_label="\r\nVehicleCargo = ";
+    auto cargo_at=info.find(cargo_label);
+    if(cargo_at!=info.npos) {
+        auto fields=info.substr(cargo_at+cargo_label.size());
+        const auto eol=fields.find("\r\n");
+        if(eol==fields.npos || eol>100) throw std::runtime_error("Invalid vehicle cargo signature.");
+        std::istringstream input(std::string{fields.substr(0,eol)});
+        input.imbue(std::locale::classic());
+        NearbyCargo cargo; std::string hex,extra;
+        if(!(input>>cargo.vehicles>>cargo.items>>hex) || (input>>extra) || hex.size()!=cargo.digest.size()*2)
+            throw std::runtime_error("Invalid vehicle cargo signature.");
+        for(size_t i=0;i<cargo.digest.size();++i) {
+            auto begin=hex.data()+2*i;
+            auto decoded=std::from_chars(begin,begin+2,cargo.digest[i],16);
+            if(decoded.ec!=std::errc{} || decoded.ptr!=begin+2) throw std::runtime_error("Invalid cargo checksum.");
+        }
+        result.vehicle_cargo=cargo;
+    }
     return result;
 }
 }

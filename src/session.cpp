@@ -1,9 +1,11 @@
 #include "session.hpp"
 #include "private_capture.hpp"
+#include "vehicle_check.hpp"
 #include "thumbnail_image.hpp"
 #include <windows.h>
 #include <reshade.hpp>
 #include <chrono>
+#include <algorithm>
 #include <utility>
 #include <cmath>
 #include <sstream>
@@ -161,7 +163,7 @@ void Session::attach() {
         else finish(e.what());
         return;
     }
-    log_event({"attach","Add-on 0.2.1, private world format 1, Steam build 13300582"});
+    log_event({"attach","Add-on 0.2.2, private world format 1, Steam build 13300582"});
     std::lock_guard lock(mutex_);
     request_=Request{Action::start,{},++next_request_,GetTickCount64(),file_time(),{}};
 }
@@ -264,9 +266,24 @@ void Session::handle(Request req) {
         if(record.world.cinematic()) throw std::runtime_error(hold_message(SaveHold::cutscene));
         event("capture_begin","thumbnail_bytes="+std::to_string(req.preview.size()),record.world);
         require_gameplay(); // Last gate before native code sees a save request.
+        auto vehicles=sample_vehicles(game_->base(),record.world.position);
+        record.vehicle_seat=vehicles.seat;
         record.image=capture_private_world(game_->base());
         event("capture_complete","world="+std::to_string(native_world_id(record.image))+" bytes="+std::to_string(record.image.size()),record.world);
-        writing_=std::async(std::launch::async,[this,library,rec=std::move(record),png=std::move(req.preview),when=req.wall_time]() {
+        writing_=std::async(std::launch::async,[this,library,rec=std::move(record),png=std::move(req.preview),vehicles=std::move(vehicles),when=req.wall_time]() mutable {
+            rec.vehicle_cargo=summarize_vehicle_cargo(vehicles);
+            const auto checked=align_private_vehicle_poses(rec.image,vehicles);
+            std::ostringstream detail;
+            detail<<"nearby="<<vehicles.vehicles.size()<<" checked="<<checked.checked<<" adjusted="<<checked.adjusted
+                  <<" authored="<<checked.authored<<" unrecorded="<<checked.unavailable<<" scan_complete="<<vehicles.complete;
+            if(rec.vehicle_cargo) detail<<" vehicle_cargo_items="<<rec.vehicle_cargo->items;
+            if(vehicles.seat) detail<<" seated="<<(*vehicles.seat!=no_ride);
+            const bool road_seat=vehicles.seat && ((*vehicles.seat>>13 & 255)==15 ||
+                (*vehicles.seat>>13 & 255)==16 || (*vehicles.seat>>13 & 255)==32);
+            const bool rider_seen=!road_seat || std::any_of(vehicles.vehicles.begin(),vehicles.vehicles.end(),
+                [&](const LiveVehicle &v){return v.actor==*vehicles.seat;});
+            const bool vehicle_warning=!vehicles.complete || checked.unavailable || !rider_seen;
+            event("vehicle_capture",detail.str());
             auto entry=library->store(pack_record(rec,png),when);
             const bool timed=entry.shelf==Shelf::timed;
             log_event({"saved",std::string(timed?"Auto Save ":"Quick Save ")+"slot="+std::to_string(entry.slot)+" sha256="+digest_text(entry.digest)+" preview_bytes="+std::to_string(png.size()),
@@ -281,7 +298,8 @@ void Session::handle(Request req) {
                 next->erase(std::remove_if(next->begin(),next->end(),[&](const Entry &e){return e.slot==entry.slot;}),next->end());
                 next->insert(next->begin(),entry); rows=next;
             }
-            return std::string(timed?"Auto Save #":"Quicksaved #")+std::to_string(entry.sequence)+(png.empty()?" (no preview).":".");
+            return std::string(timed?"Auto Save #":"Quicksaved #")+std::to_string(entry.sequence)+(png.empty()?" (no preview).":".")+
+                   (vehicle_warning?" Vehicle position unconfirmed.":"");
         });
         phase_=Phase::writing; if(!timed_capture_) status("Writing private quicksave...");return;
     }
@@ -326,7 +344,7 @@ void Session::poll() {
         // Keep the arrival position above. Inventory can still be rebuilding
         // for several frames after the native load request finishes.
         if(!selected_.scenes.empty()) resume_scenes(selected_.scenes);
-        delivery_check_.start(GetTickCount64()); phase_=Phase::verify;
+        delivery_check_.start(GetTickCount64()); vehicle_retry_until_=GetTickCount64()+2500; phase_=Phase::verify;
         event("delivery_check_pending","Waiting for the loaded world to settle.");
         return;
     }
@@ -339,6 +357,22 @@ void Session::poll() {
         const auto actual=ready ? game_->sample() : WorldSample{};
         if(ready && ((selected_.world.delivery && !actual.delivery) ||
                     (selected_.world.carried_count && !actual.carried_count))) return;
+        if(ready) {
+            const auto nearby=sample_vehicles(game_->base(),actual.position);
+            bool pending{};
+            const auto result=compare_loaded_vehicles(selected_.vehicles,nearby,selected_.world.position,
+                                                      selected_.vehicle_seat,&pending);
+            if(pending && now<vehicle_retry_until_) return;
+            if(pending) world_message_+=" Vehicle or seat still unconfirmed. See Diagnostics.";
+            if(selected_.vehicle_cargo) {
+                const auto current=summarize_vehicle_cargo(nearby);
+                const auto &saved=*selected_.vehicle_cargo;
+                event("vehicle_cargo_after_load",!current?"unavailable":
+                    current->vehicles==saved.vehicles && current->items==saved.items && current->digest==saved.digest?
+                    "match":"vehicle or cargo set differs");
+            }
+            event("vehicle_after_load",result);
+        } else event("vehicle_after_load","World did not settle before timeout.");
         event("delivery_world_sample",ready?"settled":"timed out",ready?std::optional<WorldSample>(actual):std::nullopt);
         if(actual.delivery && selected_.world.delivery) {
             const auto &saved=*selected_.world.delivery;

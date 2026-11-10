@@ -1,4 +1,4 @@
-DIRECTOR'S CUT QUICKSAVES   |   0.2.1
+DIRECTOR'S CUT QUICKSAVES   |   0.2.2
 For DEATH STRANDING DIRECTOR'S CUT, Steam PC build 13300582
 
 INSTALL
@@ -14,6 +14,12 @@ to load. If you changed ReShade's menu shortcut, use that key in place of Home.
 Under Quick Save keys, add a key or click an existing key to replace it.
 F5, C and B can all be assigned at once. Each works independently. The game
 can still receive the same key for its own controls.
+
+VEHICLES
+Quick Save and Auto Save check the vehicle Sam is riding and loaded bikes,
+trucks and roadsters within 100 world units. Diagnostics records placement,
+battery, life and cargo observations. The game handles bike and truck seating.
+A roadster can reload parked with Sam on foot.
 
 LAYOUT
 Drag the grip below either save list to change its height. ReShade remembers

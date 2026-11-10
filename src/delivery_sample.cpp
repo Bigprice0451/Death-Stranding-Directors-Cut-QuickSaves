@@ -92,11 +92,15 @@ bool unowned(Address section) {
     return read_field(section + offsetof(CRITICAL_SECTION, OwningThread), owner) && !owner;
 }
 
-bool collect_carried_ids(Address image, std::vector<std::uint16_t>& ids) {
+Address carried_inventory(Address image) {
     Address manager{}, inventory{};
     if (!read_field(image + 0x7be7980, manager) || !manager ||
-        !read_field(manager + 0x20220, inventory) || !inventory || !unowned(inventory + 0xa0))
-        return false;
+        !read_field(manager + 0x20220, inventory)) return 0;
+    return inventory;
+}
+
+bool collect_inventory_ids(Address inventory, std::vector<std::uint16_t>& ids) {
+    if (!inventory || !unowned(inventory + 0xa0)) return false;
     std::vector<Address> groups, stacks, items;
     if (!read_pointers(inventory + 0x10, 128, groups)) return false;
     std::size_t stacks_seen = 0;
@@ -122,6 +126,12 @@ bool collect_carried_ids(Address image, std::vector<std::uint16_t>& ids) {
     std::sort(ids.begin(), ids.end());
     ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
     return true;
+}
+
+bool stable_inventory_ids(Address inventory, std::vector<std::uint16_t>& ids) {
+    std::vector<std::uint16_t> confirmation;
+    return collect_inventory_ids(inventory, ids) && collect_inventory_ids(inventory, confirmation) &&
+           ids == confirmation;
 }
 }
 
@@ -156,10 +166,30 @@ std::optional<DeliverySample> sample_delivery_state(std::uintptr_t validated_bas
 std::optional<std::uint32_t> sample_carried_cargo_count(std::uintptr_t validated_base) noexcept {
     try {
         if (!validated_base) return std::nullopt;
-        std::vector<std::uint16_t> ids, confirmation;
-        if (!collect_carried_ids(validated_base, ids) || !collect_carried_ids(validated_base, confirmation) ||
-            ids != confirmation) return std::nullopt;
+        const auto inventory = carried_inventory(validated_base);
+        std::vector<std::uint16_t> ids;
+        if (!stable_inventory_ids(inventory, ids) || carried_inventory(validated_base) != inventory)
+            return std::nullopt;
         return static_cast<std::uint32_t>(ids.size());
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::optional<InventorySignature> sample_inventory_signature(std::uintptr_t inventory) noexcept {
+    try {
+        std::vector<std::uint16_t> ids;
+        if (!stable_inventory_ids(inventory, ids)) return std::nullopt;
+        // Format 1 hashes a version byte and the sorted unique 16-bit cargo
+        // actor IDs in little-endian order. Repacking a bag within this vehicle
+        // should leave its signature alone. Replacing that bag should change it.
+        Bytes encoded{1};
+        encoded.reserve(1 + ids.size() * 2);
+        for (auto id : ids) {
+            encoded.push_back(static_cast<std::uint8_t>(id));
+            encoded.push_back(static_cast<std::uint8_t>(id >> 8));
+        }
+        return InventorySignature{static_cast<std::uint32_t>(ids.size()), sha256(encoded)};
     } catch (...) {
         return std::nullopt;
     }

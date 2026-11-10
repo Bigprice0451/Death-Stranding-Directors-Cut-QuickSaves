@@ -1,6 +1,7 @@
 #include "library.hpp"
 #include <iostream>
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <windows.h>
@@ -36,10 +37,43 @@ static Bytes committed_trim(unsigned account,Shelf shelf,unsigned cap,const std:
     return raw;
 }
 
-int main() {
+// Run with --benchmark from a scratch folder with at least 550 MiB available.
+// Use the normal store entry point to fill and rotate a separate synthetic shelf.
+static void benchmark_full_shelf(const fs::path &work) {
+    auto native=fixture(0);
+    constexpr size_t state_size=5u*1024u*1024u;
+    const auto length=std::to_string(state_size);
+    std::memcpy(native.data()+16,length.c_str(),length.size()+1);
+    native.resize(native.size()+state_size-1,0x5A);
+    Library library(work,"104");
+    for(unsigned i=0;i<limit;++i) {
+        native.back()=static_cast<uint8_t>(i);
+        library.store(native);
+    }
+    require(library.list().size()==limit,"synthetic shelf is incomplete");
+    std::vector<double> samples;
+    for(unsigned i=0;i<9;++i) {
+        native.back()=static_cast<uint8_t>(limit+i);
+        const auto start=std::chrono::steady_clock::now();
+        auto entry=library.store(native);
+        const auto elapsed=std::chrono::steady_clock::now()-start;
+        require(entry.sequence==limit+i+1 && library.read(entry)==native,"benchmark rotation lost the record");
+        samples.push_back(std::chrono::duration<double,std::milli>(elapsed).count());
+    }
+    std::cout<<"100-slot archive, "<<native.size()<<" bytes per checkpoint, rotation times (ms):";
+    for(double ms:samples) std::cout<<" "<<ms;
+    std::sort(samples.begin(),samples.end());
+    std::cout<<"; median "<<samples[samples.size()/2]<<" ms\n";
+}
+
+int main(int argc,char **argv) {
     const auto work = fs::current_path() / ("test-library-" + std::to_string(GetCurrentProcessId()));
-    fs::create_directory(work);
+    require(fs::create_directory(work),"synthetic test folder already exists");
     try {
+        if(argc==2 && std::string(argv[1])=="--benchmark") {
+            benchmark_full_shelf(work);
+            fs::remove_all(work);return 0;
+        }
         auto input = fixture(0);
         auto info = describe(input);
         require(info.title=="Order \"Test\"" && info.location=="Capital Knot City","native fields");
@@ -70,6 +104,47 @@ int main() {
             out.write(reinterpret_cast<const char*>(data.data()),data.size());
             require(out.good(),"failed to create damaged archive fixture");
         };
+        // File size and modification time alone can both survive an outside edit.
+        // Corrupt the oldest file after a verified scan. The next store must use
+        // a free slot, and a subsequent external repair must rejoin the rotation.
+        Library edited(work/"Edited","121",Shelf::manual,2);
+        const auto first=edited.store(fixture(10));
+        const auto second=edited.store(fixture(11));
+        require(edited.list().size()==2,"could not warm the archive inventory");
+        const auto first_file=edited.path(first.slot);
+        const auto old_time=fs::last_write_time(first_file);
+        const auto original=read_file(first_file);
+        auto changed_bytes=original;changed_bytes.back()^=1;
+        put(first_file,changed_bytes);fs::last_write_time(first_file,old_time);
+        const auto third=edited.store(fixture(12));
+        require(third.slot==3 && read_file(first_file)==changed_bytes && edited.read(second)==fixture(11),
+                "same-length damage with restored timestamp was overwritten");
+        fs::remove(edited.path(second.slot));
+        fs::remove(first_file);put(first_file,original);fs::last_write_time(first_file,old_time);
+        const auto fourth=edited.store(fixture(13));
+        require(fourth.slot==first.slot && fourth.sequence==third.sequence+1 && edited.read(third)==fixture(12),
+                "external repair or removal escaped the retained inventory");
+        require(edited.list().size()==2,"could not refresh the repaired archive");
+        // Another instance publishes a healthy replacement. An existing instance
+        // must notice its newer sequence even when the timestamp is restored.
+        const auto previous_time=fs::last_write_time(edited.path(third.slot));
+        Library importer(work/"Edited","121");
+        auto imported=importer.store(fixture(14));
+        require(imported.slot==third.slot,"fixture replaced unexpected slot");
+        fs::last_write_time(edited.path(imported.slot),previous_time);
+        auto next=edited.store(fixture(15));
+        require(next.sequence==imported.sequence+1 && edited.read(imported)==fixture(14),
+                "existing inventory missed a newer external occupant");
+        require(edited.list().size()==2,"could not warm the busy-file fixture");
+        const auto busy_file=edited.path(imported.slot);
+        HANDLE writer=CreateFileW(busy_file.c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,OPEN_EXISTING,0,nullptr);
+        require(writer!=INVALID_HANDLE_VALUE,"could not open synthetic save for editing");
+        Entry beside_busy;
+        try { beside_busy=edited.store(fixture(16)); }
+        catch(...) { CloseHandle(writer);throw; }
+        CloseHandle(writer);
+        require(beside_busy.slot!=imported.slot && edited.read(imported)==fixture(14),
+                "cached slot stayed eligible while an outside writer held it");
         put(damaged.path(bad.slot),invalidHeader);
         unsigned hidden=0; auto survivors=damaged.list(&hidden);
         require(hidden==1,"wrong damaged slot count");

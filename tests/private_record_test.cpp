@@ -35,6 +35,14 @@ int main() {
         expect(native_thumbnail(wrapped)==png,"Screenshot mismatch");
         expect(describe(wrapped).title=="Cutscene quicksave","Incorrect title");
         auto read=unpack_record(wrapped);
+        expect(!read.vehicle_seat,"Invented a seat for a legacy record");
+        record.vehicle_cargo=NearbyCargo{2,11,{}};
+        record.vehicle_cargo->digest[12]=0xab;
+        const auto cargo_read=unpack_record(pack_record(record,{})).vehicle_cargo;
+        expect(cargo_read && cargo_read->vehicles==2 && cargo_read->items==11 &&
+               cargo_read->digest==record.vehicle_cargo->digest,"Lost vehicle cargo signature");
+        record.vehicle_seat=0x1e000;
+        expect(unpack_record(pack_record(record,{})).vehicle_seat==record.vehicle_seat,"Lost mounted vehicle identity");
         expect(read.world.position==record.world.position && read.world.flags==record.world.flags && read.image==record.image,"Lost world state");
         expect(read.world.carried_count && *read.world.carried_count==7,"Lost cargo count");
         expect(read.world.delivery && read.world.delivery->active_orders==2 && read.world.delivery->delivered_count==3 && read.world.delivery->digest[31]==77,"Lost order diagnostic");

@@ -44,6 +44,17 @@ public:
     // Returns the number retired. Stale selections never authorize removal.
     unsigned set_capacity(unsigned requested, const std::vector<Entry> &expected_healthy) const;
 private:
+    // Only verified entries are remembered, for this shelf and this process.
+    // All reads and writes to this array run under the shelf's archive mutex.
+    struct VerifiedSlot {
+        uint64_t file_id{}, change_number{}, size{}, write_time{};
+        uint32_t volume{};
+        Entry entry;
+    };
+    struct Inventory;
+    enum class Inspection { full, reuse_verified };
+    Inventory scan(uint32_t account, Inspection inspection) const;
+    mutable std::array<VerifiedSlot,limit> verified_{};
     fs::path folder_;
     std::string account_;
     Shelf shelf_;
