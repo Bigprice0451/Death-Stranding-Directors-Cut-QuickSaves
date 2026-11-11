@@ -6,6 +6,9 @@ The overlay has separate evidence for creation and for a rendered frame. A nativ
 
 If the game defers a resize during a transition, the overlay waits. It can request the normal rebuild twice, then offers a manual display-settings reapply. If NVIDIA returns a scaled image for its DLAA sizing query, the add-on asks for regular Quality again. If the driver rejects the override during creation, the game recreates its normal Quality feature before the current rebuild returns.
 
+
+The settings-snapshot detour is shared with the optional ultrawide control in `src/graphics_snapshot.cpp`. It passes the original call-site address to the DLAA callback, preserving the same fenced-refresh check. Only one detour owns that function. Ultrawide controls the output/image area; this DLAA option independently controls the internal NGX input size. See [ultrawide integration](ULTRAWIDE.md).
+
 ## Where to make changes
 
 `src/dlaa_ngx.hpp` contains the NVIDIA-side rules and frame checks. The setting that the menu calls Quality is 2. The game rejects modes above 4 in its own manager, so only the query inside the renderer and the NGX create call receive 5. The DLAA-specific preset hint is an unsigned integer. The create call saves and restores the game's previous mode and preset on the shared parameter block. The game calculates its real rendering scale from the sizing result before allocating textures.

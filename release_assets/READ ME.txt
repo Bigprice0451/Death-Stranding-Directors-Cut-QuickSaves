@@ -1,4 +1,4 @@
-DIRECTOR'S CUT QUICKSAVES   |   0.2.3
+DIRECTOR'S CUT QUICKSAVES   |   0.2.4
 For DEATH STRANDING DIRECTOR'S CUT, Steam PC build 13300582
 
 INSTALL
@@ -44,6 +44,26 @@ loading keep their normal behavior. Turn it off to restore normal turning.
 This option is experimental. Native-code tests passed, but equivalent turning
 to zero cargo across all real load/terrain/animation states is not yet proven.
 Diagnostics records whether turning adjustments actually applied.
+
+OPTIONAL ULTRAWIDE
+Enable Force 3440 x 1440 Ultrawide in QuickSaves to request the full image
+area, overriding the game's resolution choice and reapplying after Alt+Tab
+returns. The game's monitor must be set to 3440x1440 in Windows. The switch
+starts off and remembers your preference. It leaves other graphics choices
+alone; DLAA + Preset K remains separate. The panel reports actual game image
+and output dimensions. Turn it off to restore the underlying game resolution.
+The option does not crop black pixels already contained in movie files.
+
+OPTIONAL VEHICLE REPAIR
+Under Vehicle repair, enable Repair Vehicles While Charging. It adds 1% of
+maximum condition per five seconds of actual charging. Leaving the charger,
+a full battery or disabling the switch stops further repair. Ordinary damage
+still applies. Destroyed vehicles cannot be revived, and passive battery
+recovery does not count. The switch starts off and remembers your preference.
+
+The new options have automated and isolated native-code checks. In-game
+Alt+Tab behavior, visuals and charger variants still need gameplay testing.
+Diagnostics records actual display sizes and charging/repair activity.
 
 OPTIONAL GRAPHICS
 On an NVIDIA RTX GPU, set the game's NVIDIA DLSS option to Quality. In the

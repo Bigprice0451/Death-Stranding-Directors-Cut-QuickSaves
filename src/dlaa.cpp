@@ -1,5 +1,6 @@
 #include "dlaa.hpp"
 #include "dlaa_ngx.hpp"
+#include "graphics_snapshot.hpp"
 #include <windows.h>
 #include <d3d12.h>
 #include <intrin.h>
@@ -15,12 +16,11 @@ using namespace dlaa_detail;
 using Configure = void (*)(void *, void *, int, bool);
 using Evaluate = U32 (*)(void *, void *, void *, const void *);
 using Release = U32 (*)(void *);
-using Snapshot = void *(*)(void *, void *);
 using SetDisplaySize = void (*)(void *, U32, U32);
 constexpr uintptr_t manager_rva = 0x458ac50;
 constexpr uintptr_t configure_rva = 0x19894c0, optimal_rva = 0x1980640;
 constexpr uintptr_t create_rva = 0x38f38f0, evaluate_rva = 0x197af90, release_rva = 0x38f3ce0;
-constexpr uintptr_t snapshot_rva = 0x1cd4bb0, display_size_rva = 0x19a81a0;
+constexpr uintptr_t display_size_rva = 0x19a81a0;
 constexpr uintptr_t gfx_device_rva = 0x4f6d430, renderer_uses_dlss_rva = 0x6cdeafb;
 uintptr_t image{};
 Configure configure_original{};
@@ -28,7 +28,6 @@ Optimal optimal_original{};
 Create create_original{};
 Evaluate evaluate_original{};
 Release release_original{};
-Snapshot snapshot_original{};
 SetDisplaySize display_size_original{};
 Params api{};
 std::atomic<bool> active{}, preference{}, refresh{};
@@ -90,9 +89,8 @@ bool using_quality(void *device) {
     return device && field<void *>(device, 0xb40) && field<bool>(manager, 0) &&
         field<int>(manager, 0x14) == quality && *addr<const unsigned char *>(renderer_uses_dlss_rva) != 0;
 }
-void *snapshot_hook(void *renderer, void *copy) {
-    void *result = snapshot_original(renderer, copy);
-    if (active.load() && refresh.load() && _ReturnAddress() == addr<void *>(0x2642f0d) && result == copy && copy) {
+void observe_snapshot(void *copy, uintptr_t caller) {
+    if (active.load() && refresh.load() && caller == image + 0x2642f0d && copy) {
         void *device = *addr<void **>(gfx_device_rva);
         const auto now = GetTickCount64();
         if (using_quality(device) && nudges.load() < 2 && now >= next_nudge.load()) {
@@ -107,7 +105,6 @@ void *snapshot_hook(void *renderer, void *copy) {
             static_cast<unsigned char *>(copy)[0x20] = field<unsigned char>(device, 0x5ba1f4) ? 0 : 1;
         }
     }
-    return result;
 }
 void display_size_hook(void *device, U32 width, U32 height) {
     void *manager = addr<void *>(manager_rva);
@@ -190,7 +187,6 @@ const Hook hooks[] = {
     {create_rva, (void *)create_hook, (void **)&create_original, {0x48,0x89,0x5c,0x24,8,0x48,0x89,0x6c}},
     {evaluate_rva, (void *)evaluate_hook, (void **)&evaluate_original, {0x48,0x89,0x5c,0x24,8,0x48,0x89,0x6c}},
     {release_rva, (void *)release_hook, (void **)&release_original, {0x48,0x89,0x5c,0x24,8,0x57,0x48,0x83}},
-    {snapshot_rva, (void *)snapshot_hook, (void **)&snapshot_original, {0x8b,0x81,0xf8,3,0,0,0x89,2}},
     {display_size_rva, (void *)display_size_hook, (void **)&display_size_original, {0x40,0x53,0x48,0x83,0xec,0x20,0x80,0x3d}}
 };
 bool prepare(uintptr_t base) {
@@ -219,9 +215,11 @@ bool prepare(uintptr_t base) {
     return true;
 }
 }
+void dlaa_settings_snapshot(void *copy, uintptr_t caller) { observe_snapshot(copy, caller); }
 void start_dlaa_tracking(uintptr_t base, bool enabled) {
     std::lock_guard life(lifecycle);
     if (active.load()) return;
+    ensure_graphics_snapshot(base);
     preference.store(enabled);
     nudges.store(0);
     next_nudge.store(0);
