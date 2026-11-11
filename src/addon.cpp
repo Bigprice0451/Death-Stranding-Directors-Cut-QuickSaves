@@ -7,6 +7,7 @@
 #include "private_capture.hpp"
 #include "save_browser.hpp"
 #include "graphics_panel.hpp"
+#include "turning_panel.hpp"
 #include "quick_keys.hpp"
 #include <algorithm>
 #include <atomic>
@@ -48,6 +49,7 @@ void runtime_start(Runtime *rt) {
     else if(session.supported()) session.runtime_reopened();
     if(!session.supported()) return;
     qs::graphics_start(rt,reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)));
+    qs::turning_panel_start(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)));
     qs::keys_start();
     bool enabled=false; int minutes=10;
     reshade::get_config_value(rt,"DirectorCutQuickSaves","AutoSaveEnabled",enabled);
@@ -60,14 +62,14 @@ void runtime_start(Runtime *rt) {
 void runtime_end(Runtime *rt) {
     if(rt!=owner) return;
     if(message_hook) UnhookWindowsHookEx(message_hook);
-    if(session.supported()) {qs::keys_stop();qs::graphics_stop();}
+    if(session.supported()) {qs::keys_stop();qs::graphics_stop();qs::turning_panel_stop();}
     thumbnails.end_runtime(rt);
     session.runtime_closed();
     message_hook=nullptr; game_window=nullptr; owner=nullptr;
 }
 void present(Runtime *rt) {
     if(rt!=owner) return;
-    if(session.supported()) qs::graphics_tick();
+    if(session.supported()) {qs::graphics_tick();qs::turning_panel_tick();}
     if(!message_hook) return;
     session.expire_unhandled();
     auto now=GetTickCount64();
@@ -88,6 +90,7 @@ void capture_now(Runtime *rt,qs::Action action=qs::Action::save,std::uintptr_t t
 void panel(Runtime *rt) {
     if(rt!=owner) return;
     if(session.supported()) qs::draw_graphics_panel(rt);
+    if(session.supported()) qs::draw_turning_panel();
     qs::draw_save_browser(rt,session,thumbnails,message_hook!=nullptr,[rt]{capture_now(rt);},[rt](bool enabled,int minutes) {
         minutes=std::clamp(minutes,1,60);
         session.configure_auto(enabled,minutes);

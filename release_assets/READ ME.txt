@@ -1,4 +1,4 @@
-DIRECTOR'S CUT QUICKSAVES   |   0.2.2
+DIRECTOR'S CUT QUICKSAVES   |   0.2.3
 For DEATH STRANDING DIRECTOR'S CUT, Steam PC build 13300582
 
 INSTALL
@@ -35,6 +35,15 @@ The two lists rotate independently. Normal Death Stranding saves still work.
 F5, Auto Save and mod loads are held during cutscenes and world transitions.
 After restarting, open a delivery in the matching game world before loading
 a mod entry. The saved thumbnail shows the moment the capture was requested.
+
+OPTIONAL TURNING
+Open Gameplay in QuickSaves and enable Sam Turns on a Dime. It starts off;
+ReShade remembers your choice. It removes positive turning slowdown on foot
+without changing speed settings or cargo weight. Vehicles, cutscenes and
+loading keep their normal behavior. Turn it off to restore normal turning.
+This option is experimental. Native-code tests passed, but equivalent turning
+to zero cargo across all real load/terrain/animation states is not yet proven.
+Diagnostics records whether turning adjustments actually applied.
 
 OPTIONAL GRAPHICS
 On an NVIDIA RTX GPU, set the game's NVIDIA DLSS option to Quality. In the
