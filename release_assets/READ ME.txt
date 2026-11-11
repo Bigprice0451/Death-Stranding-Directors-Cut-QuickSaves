@@ -1,4 +1,4 @@
-DIRECTOR'S CUT QUICKSAVES   |   0.2.4
+DIRECTOR'S CUT QUICKSAVES   |   0.2.6
 For DEATH STRANDING DIRECTOR'S CUT, Steam PC build 13300582
 
 INSTALL
@@ -53,13 +53,19 @@ starts off and remembers your preference. It leaves other graphics choices
 alone; DLAA + Preset K remains separate. The panel reports actual game image
 and output dimensions. Turn it off to restore the underlying game resolution.
 The option does not crop black pixels already contained in movie files.
+Version 0.2.6 corrects repeated rendering-history resets caused by the display
+hook in earlier versions. The fix applies with the ultrawide switch on or off.
 
 OPTIONAL VEHICLE REPAIR
 Under Vehicle repair, enable Repair Vehicles While Charging. It adds 1% of
-maximum condition per five seconds of actual charging. Leaving the charger,
-a full battery or disabling the switch stops further repair. Ordinary damage
-still applies. Destroyed vehicles cannot be revived, and passive battery
-recovery does not count. The switch starts off and remembers your preference.
+maximum condition per five seconds at a working generator, even with a full
+battery. Leaving the generator, losing power or disabling the switch stops
+repair. Ordinary damage still applies. Destroyed vehicles cannot be revived,
+and passive battery recovery does not count. The switch starts off and remembers
+your preference. The panel shows current status; Diagnostics records vehicle
+condition, battery values and reasons when repair cannot proceed every 15 seconds
+while enabled, including when no vehicle updates arrive. A logging failure is
+shown in the panel and ReShade log.
 
 The new options have automated and isolated native-code checks. In-game
 Alt+Tab behavior, visuals and charger variants still need gameplay testing.

@@ -40,7 +40,8 @@ Addresses below are relative to ds.exe. The host checks the full file identity
 and the component checks entry bytes before installing hooks.
 
 - `0x2642EC0`: normal display/settings poll; arguments are renderer and user
-  settings. Its normal native application call is at `0x2643422`.
+  settings, and its return value is a Boolean change indicator. Its normal
+  native application call is at `0x2643422`.
 - `0x2642010`: graphics application, returning a Boolean change result. Its
   136-byte request contains 34 signed integers. Width/height are the first two.
   Other fields are copied intact. The constructor's unspecified value is -1.
@@ -100,6 +101,27 @@ destruction during a resize does not disable the resolution override. Startup
 reuses existing hooks and refreshes the window identity and saved preference.
 Failed startup leaves the toggle unavailable with a diagnostic message.
 
+## Rendering-history return contract
+
+The native poll returns its change indicator in AL (`movzx eax,dil` at
+`0x264353F`). Its caller tests that value at `0x263F1EE`. A true result reaches
+`0x3643C70`, which asks the renderer to invalidate temporal history through
+`0x1D04620`. DLSS then resets its accumulated frame history.
+
+Versions before 0.2.6 incorrectly declared the poll and its hook as `void`.
+Hook cleanup could leave an unrelated nonzero value in AL. Live diagnosis of
+the affected scene measured 181 history invalidations in 181 frames from this
+caller, and 213 consecutive DLSS evaluations with their reset counter at one.
+The recordings showed intermittent missing clouds. Turning the ultrawide
+checkbox off did not remove the hook, so it could not avoid the bad return.
+
+Both function signatures must remain `bool`. Every pass-through returns the
+native result, including unavailable/reentrant/disabled paths. The normal path
+retains that result through observation and cleanup. If an additional repair
+is needed, it always calls the native apply function, then combines its Boolean
+result with the poll result. Do not short-circuit the apply call when the poll
+already returned true, and do not suppress genuine history resets globally.
+
 ## Tests and troubleshooting
 
 `ultrawide_resolution_policy` checks replacements for 1920x1080, 2520x1080,
@@ -109,6 +131,13 @@ budgets, Alt+Tab rearming and immediate restoration after disabling.
 `ultrawide_menu_preference` drives the shipping checkbox through real ImGui
 input and checks saved preference scope, runtime recreation and failure UI.
 Enable `IMGUI_TEST_SOURCE_DIR` as described in README.md for the menu test.
+
+`ultrawide_native_poll_contract` compiles the production detour with private
+native-memory fixtures and fake Windows display answers. It checks both
+Boolean signatures, native false/true results through unavailable, reentrant,
+disabled and active branches, and every native/extra-repair result combination.
+It also verifies that native true never skips a necessary repair, and that
+scope cleanup releases only its own ownership. It requires no game or window.
 
 The optional `graphics_snapshot_native_test.exe <path-to-ds.exe>` verifies the
 full executable hash and maps the original code in its own process without

@@ -44,6 +44,15 @@ struct Live {
     const char *problem{};
 };
 Live live;
+struct Counters {
+    uint64_t evaluations{}, failures{}, creations{}, releases{}, last_evaluation_at{};
+    uint64_t history_resets{};
+    bool last_frame_reset{};
+    U32 last_result{};
+};
+// These are session totals, separate from Live: destroying a feature must not
+// erase the evidence needed to diagnose repeated creation or failed frames.
+Counters counters;
 const char *startup_error{};
 
 // A size answer may be used only by its matching creation on this thread. This
@@ -138,6 +147,7 @@ U32 create_hook(void *cmd, U32 feature, void *params, void **handle) {
         current->problem = "NGX declined DLAA or its K hint. The game retried its normal Quality configuration.";
     }
     std::lock_guard lock(observations);
+    ++counters.creations;
     live = {};
     if (success(result) && *handle && info.preset_requested) {
         live.handle = *handle;
@@ -155,6 +165,14 @@ U32 evaluate_hook(void *cmd, void *handle, void *params, const void *frame) {
     const U32 result = evaluate_original(cmd, handle, params, frame);
     if (!active.load() || !frame || !handle) return result;
     std::lock_guard lock(observations);
+    ++counters.evaluations;
+    // Build 13300582's older NGX frame structure: +0x38 is the Reset integer.
+    // Count all native DLSS frames, including regular Quality with DLAA off.
+    counters.last_frame_reset = field<int>(frame, 0x38) != 0;
+    if (counters.last_frame_reset) ++counters.history_resets;
+    counters.last_result = result;
+    counters.last_evaluation_at = GetTickCount64();
+    if (!success(result)) ++counters.failures;
     if (handle != live.handle) return result;
     if (!success(result)) {
         live.native = false;
@@ -176,6 +194,7 @@ U32 release_hook(void *handle) {
     const U32 result = release_original(handle);
     if (success(result)) {
         std::lock_guard lock(observations);
+        ++counters.releases;
         if (handle == live.handle) live = {};
     }
     return result;
@@ -257,6 +276,11 @@ DlaaStatus dlaa_status() {
     std::lock_guard lock(observations);
     s.requested = preference.load();
     s.hooks_ready = active.load();
+    s.evaluations=counters.evaluations; s.evaluation_failures=counters.failures;
+    s.history_resets=counters.history_resets; s.last_frame_reset=counters.last_frame_reset;
+    s.creations=counters.creations; s.releases=counters.releases;
+    s.last_evaluation_at=counters.last_evaluation_at; s.last_result=counters.last_result;
+    s.refresh_pending=refresh.load(); s.refresh_nudges=nudges.load();
     const bool recent = live.last_sample && GetTickCount64() - live.last_sample < 1800;
     s.preset_requested = live.handle && live.creation.preset_requested;
     s.evaluated = s.preset_requested && live.native && recent;

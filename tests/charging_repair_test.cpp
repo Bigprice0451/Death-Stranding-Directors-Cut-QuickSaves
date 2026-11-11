@@ -25,9 +25,9 @@ int main() {
         check(repaired_condition(s)==s.condition, "Passive battery recharge repaired");
         for (float after : {99.f, 100.f}) {
             s=sample(); s.battery_after=after;
-            check(repaired_condition(s)==s.condition, "No actual transfer still repaired");
+            check(repaired_condition(s)>s.condition, "Working charger with full/decreasing battery did not repair");
         }
-        // No stored time: leaving the charger, a full battery, and toggling off
+        // No stored time: leaving the charger and toggling off
         // cannot bank an interval that is awarded on the next charging frame.
         s=sample(); const auto once=repaired_condition(s); s.condition=once;
         for (unsigned i=0; i<10000; ++i) { s.active_charge=false; s.condition=repaired_condition(s); }

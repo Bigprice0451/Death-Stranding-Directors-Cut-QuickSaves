@@ -11,11 +11,12 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 namespace {
 uintptr_t base{}, charger{}, vehicle_resource{};
-bool charger_present=true, charger_unavailable=false;
+bool charger_present=true, charger_unavailable=false, generator_power_zero=false;
 void (*during_native_update)(void *){};
 void check(bool value,const char *why) { if (!value) throw std::runtime_error(why); }
 template<class T> void put(void *p,size_t offset,T value) { std::memcpy(static_cast<uint8_t *>(p)+offset,&value,sizeof value); }
@@ -42,7 +43,7 @@ void change_actor_during_update(void *entity) {
     auto *actor=get<void *>(entity,0x8a8); put(actor,8,uint32_t{456});
 }
 bool unavailable() { return charger_unavailable; }
-float wind(void *,void *,float *a,float *b) { *a=1; *b=1; return 1; }
+float wind(void *,void *,float *a,float *b) { *a=generator_power_zero?0.f:1.f; *b=*a; return 1; }
 float phase() { return 1; }
 void *resource() { return reinterpret_cast<void *>(vehicle_resource); }
 void stub(uintptr_t rva,void *function) {
@@ -92,7 +93,7 @@ struct Fixture {
     }
     void reset(uintptr_t type=0x3e26070) {
         entity.fill(0); actor.fill(0); generator.fill(0); config.fill(0); world.fill(0);
-        charger_present=true; charger_unavailable=false; during_native_update=nullptr;
+        charger_present=true; charger_unavailable=false; generator_power_zero=false; during_native_update=nullptr;
         put(actor.data(),0,base+type); put(actor.data(),8,uint32_t{123});
         put(actor.data(),0x20,uint8_t{1}); put(actor.data(),0x24,uint32_t{2});
         put(actor.data(),0x68,entity.data()+0x20);
@@ -171,7 +172,41 @@ int wmain(int argc,wchar_t **argv) {
         fixture.reset(); charger_unavailable=true; fixture.update(.1f);
         check(get<float>(fixture.entity.data(),0x6e8)==500.f,"Unavailable generator repaired");
         fixture.reset(); put(fixture.actor.data(),0xb8,1000.f); fixture.update(.1f);
-        check(get<float>(fixture.entity.data(),0x6e8)==500.f,"Full battery repaired");
+        check(std::abs(get<float>(fixture.entity.data(),0x6e8)-500.2f)<0.0001f,
+              "Full battery at a working generator did not repair");
+        fixture.reset(); put(fixture.actor.data(),0xb8,999.f);
+        for(unsigned i=0;i<300;++i) fixture.update(1.f/60.f);
+        check(std::abs(get<float>(fixture.entity.data(),0x6e8)-510.f)<0.03f,
+              "Repair stopped when the generator filled the battery");
+        const auto no_power = qs::charging_repair_status().reasons[static_cast<size_t>(qs::ChargingRepairReason::charger_unavailable)];
+        for (unsigned variant=0; variant<4; ++variant) {
+            fixture.reset(); put(fixture.actor.data(),0xb8,1000.f);
+            if (variant==0) charger_unavailable=true;
+            if (variant==1) put(fixture.generator.data(),0xa8,uint8_t{0x80});
+            if (variant==2) put(fixture.config.data(),0x4b4,0.f);
+            if (variant==3) put(fixture.config.data(),0x4b4,std::numeric_limits<float>::quiet_NaN());
+            fixture.update(.1f);
+            check(get<float>(fixture.entity.data(),0x6e8)==500.f,
+                  "Full battery at an unavailable/disabled/invalid-rate generator repaired");
+        }
+        check(qs::charging_repair_status().reasons[static_cast<size_t>(qs::ChargingRepairReason::charger_unavailable)]==no_power+4,
+              "Generator rejection reasons were not recorded");
+        fixture.reset(); put(fixture.actor.data(),0xb8,1000.f); charger_present=false; fixture.update(.1f);
+        check(get<float>(fixture.entity.data(),0x6e8)==500.f,"Leaving the generator with a full battery still repaired");
+        fixture.reset(); put(fixture.actor.data(),0xe8,20.f); fixture.update(.1f);
+        check(get<float>(fixture.actor.data(),0xb8)<100.f &&
+              std::abs(get<float>(fixture.entity.data(),0x6e8)-500.2f)<0.0001f,
+              "Native consumption hid the working generator connection");
+        fixture.reset(); generator_power_zero=true; fixture.update(.1f);
+        check(get<float>(fixture.actor.data(),0xb8)==100.f && get<float>(fixture.entity.data(),0x6e8)==500.f,
+              "Unfilled battery at a generator transferring no power repaired");
+        fixture.reset(); put(fixture.generator.data(),0x84,uint32_t{3});
+        put(fixture.config.data(),0x4bc,100.f); put(fixture.config.data(),0x4dc,1.5f);
+        put(fixture.actor.data(),0xb8,1000.f); generator_power_zero=true; fixture.update(.1f);
+        check(get<float>(fixture.entity.data(),0x6e8)==500.f,"Overcharge allowance was mistaken for full battery");
+        put(fixture.actor.data(),0xb8,1500.f); fixture.update(.1f);
+        check(std::abs(get<float>(fixture.entity.data(),0x6e8)-500.2f)<0.0001f,
+              "Native overcharge-full battery at available generator did not repair");
         for(float health : {0.f,-1.f,1000.f,1100.f}) {
             fixture.reset(); put(fixture.entity.data(),0x6e8,health); fixture.update(.1f);
             check(get<float>(fixture.entity.data(),0x6e8)==health,"Dead/full/overfull vehicle changed");

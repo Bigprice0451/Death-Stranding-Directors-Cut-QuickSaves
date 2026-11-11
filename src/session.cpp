@@ -163,7 +163,7 @@ void Session::attach() {
         else finish(e.what());
         return;
     }
-    log_event({"attach","Add-on 0.2.2, private world format 1, Steam build 13300582"});
+    log_event({"attach","Add-on " QS_VERSION ", private world format 1, Steam build 13300582"});
     std::lock_guard lock(mutex_);
     request_=Request{Action::start,{},++next_request_,GetTickCount64(),file_time(),{}};
 }

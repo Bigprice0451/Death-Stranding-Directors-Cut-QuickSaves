@@ -10,7 +10,9 @@
 namespace qs {
 namespace {
 using namespace ultrawide_detail;
-using Poll = void (*)(void *, void *);
+// The native caller treats AL as "settings changed" and resets temporal
+// history when true. Preserve this result through all observation/RAII work.
+using Poll = bool (*)(void *, void *);
 using Apply = bool (*)(void *, void *, const Options *);
 using ReadOptions = void (*)(void *, Options *);
 constexpr uintptr_t poll_rva=0x2642ec0, apply_rva=0x2642010, read_options_rva=0x26447c0;
@@ -123,9 +125,9 @@ void publish(const Observation &sample, const Display &screen) {
     report.selected=unpack(selected.load()); report.attempts=budget.attempts();
     report.repairs=repair_count; report.last_sample=GetTickCount64();
 }
-void poll_hook(void *renderer, void *settings) {
+bool poll_hook(void *renderer, void *settings) {
     if (!ready.load() || processing.test_and_set(std::memory_order_acquire)) {
-        original_poll(renderer,settings); return;
+        return original_poll(renderer,settings);
     }
     struct Scope {
         Scope(){in_poll=true;}
@@ -133,12 +135,11 @@ void poll_hook(void *renderer, void *settings) {
     } scope;
     if (!wanted.load() && !owns_size.load()) {
         selected.store(0); budget.reset();
-        original_poll(renderer,settings);
-        return;
+        return original_poll(renderer,settings);
     }
     auto before=observe(renderer);
     if (wanted.load() && !selected.load() && before.valid) remember(before.render);
-    original_poll(renderer,settings);
+    bool changed=original_poll(renderer,settings);
     auto sample=observe(renderer);
     const auto screen=display();
     const bool request=wanted.load();
@@ -168,13 +169,15 @@ void poll_hook(void *renderer, void *settings) {
                 ComparisonScope(){force_comparison=true;}
                 ~ComparisonScope(){force_comparison=previous;}
             } comparison;
-            original_apply(settings,renderer,&effective);
+            const bool applied=original_apply(settings,renderer,&effective);
+            changed |= applied;
         }
         sample=observe(renderer);
         if (!request && (!sample.valid || sample.render!=normal || sample.viewport!=normal))
             owns_size.store(true); // Restoration was deferred; retain it for the next opportunity.
     }
     publish(sample,screen);
+    return changed;
 }
 template<size_t N> void signature(uintptr_t rva,const uint8_t (&bytes)[N]) {
     if (std::memcmp(reinterpret_cast<const void *>(image+rva),bytes,N))

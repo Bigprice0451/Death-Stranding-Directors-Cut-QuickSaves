@@ -37,3 +37,35 @@ dlaa_gpu_smoke.exe "D:\DLSS-Runtime" "D:\NGX-Test" 3360 1440
 With an RTX 4090, driver 617.42 and NVIDIA DLL 310.9.16.0, both evaluations completed on the GPU. At 3360 by 1440, DLAA rendered 3360 by 1440 with K=11 submitted. Switching off restored mode 2 with default hint 0 and an input of 2240 by 960. At 1280 by 720, the corresponding inputs were 1280 by 720 and 853 by 480. The smoke test exercises the public NGX runtime in its own process. The QuickSaves readout provides the separate in-game check after installation.
 
 NVIDIA documents the quality and preset numbers in the [NGX definitions](https://github.com/NVIDIA/DLSS/blob/main/include/nvsdk_ngx_defs.h). The [Streamline DLSS implementation](https://github.com/NVIDIA-RTX/Streamline/blob/main/source/plugins/sl.dlss/dlssEntry.cpp) demonstrates submitting the per-mode preset as an unsigned integer.
+
+## Diagnosing flashes or missing image layers
+
+The local diagnostics log writes `dlss_sample` at most every 15 seconds while
+the NVIDIA graphics hooks are active, including when the DLAA switch is off.
+It records NGX evaluation/failure totals, creation/release totals, the latest
+result code and frame age, the DLAA preference, measured dimensions and pending
+refresh nudges. `history_resets` counts frames submitted with the native Reset
+flag; `last_frame_reset` describes the last submitted frame. A few resets during
+loading, camera cuts and real graphics changes are expected. Resets growing at
+the same rate as evaluations during a steady scene indicate lost temporal
+history. These counters include ordinary DLSS with the DLAA switch off.
+The counters survive swapchain resets; no callback writes files
+or copies GPU textures. `evaluated=0` is not an NGX failure by itself: ordinary
+Quality, no current game frame, or DLAA off can all cause it. Inspect `failures`
+and `result` separately. Creation counts cover the intercepted native configure
+path; they are not an inventory of every unrelated NGX feature.
+
+For a reproducible flash, compare the same scene with only DLAA disabled, then
+with NVIDIA DLSS disabled in the game. These are different tests: disabling
+DLAA retains the installed NVIDIA DLL and the game's normal DLSS Quality path.
+Compare `ultrawide_sample` repair counts and ReShade `ResizeBuffers` timestamps
+with the recording before attributing a flash to repeated resolution changes.
+A successful NGX result and stable size do not prove every rendered image layer
+is correct. Keep the recording and the matching log for further diagnosis.
+
+The November 2026 cloud-flicker investigation found a lost Boolean return in
+the display poll hook, which told the game that settings changed every frame.
+Version 0.2.6 preserves that return; see the exact call chain and maintenance
+contract in [ULTRAWIDE.md](ULTRAWIDE.md#rendering-history-return-contract).
+Disabling DLSS hid the symptom. An isolated AutoExposure creation test did not
+remove it, so this release does not ship an exposure override or a DLSS downgrade.

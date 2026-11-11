@@ -1,4 +1,5 @@
 #include "dlaa_ngx.hpp"
+#include "graphics_diagnostics.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -50,6 +51,31 @@ U32 create_driver(void *, U32, void *driver, void **handle) {
 }
 }
 int main() {
+    // A failed or idle renderer must still leave useful evidence. A heartbeat
+    // is rate limited independently of frame count or successful DLAA output.
+    qs::GraphicsDiagnosticClock clock;
+    check(clock.take(0) && !clock.take(14999) && clock.take(15000) && !clock.take(15001),
+        "graphics diagnostic heartbeat interval");
+    qs::DlaaStatus diagnostics;
+    diagnostics.hooks_ready=true; diagnostics.evaluation_failures=3;
+    diagnostics.evaluations=100; diagnostics.creations=2; diagnostics.releases=1;
+    diagnostics.history_resets=7; diagnostics.last_frame_reset=true;
+    diagnostics.last_result=failure; diagnostics.last_evaluation_at=14500;
+    diagnostics.detail="NGX reported an evaluation error.";
+    auto report=qs::graphics_diagnostic_text(diagnostics,15000);
+    check(report.find("failures=3")!=std::string::npos &&
+        report.find("evaluations=100")!=std::string::npos &&
+        report.find("history_resets=7; last_frame_reset=1")!=std::string::npos &&
+        report.find("creations=2; releases=1")!=std::string::npos &&
+        report.find("result=0xbad00005")!=std::string::npos &&
+        report.find("evaluation_age_ms=500")!=std::string::npos &&
+        report.find(diagnostics.detail)!=std::string::npos,
+        "failed frame evidence omitted from graphics diagnostics");
+    diagnostics={};
+    report=qs::graphics_diagnostic_text(diagnostics,15000);
+    check(report.find("evaluations=0; failures=0")!=std::string::npos &&
+        report.find("evaluation_age_ms=unavailable")!=std::string::npos,
+        "idle graphics diagnostics implied a successful frame");
     const Size out{3360,1440}; Size answer;
     FakeDriver d;
     float sharpness = -1; bool native = false;

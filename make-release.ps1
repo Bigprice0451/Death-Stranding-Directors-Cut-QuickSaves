@@ -48,7 +48,7 @@ try {
             if($hash -ne (Get-FileHash -LiteralPath $files[$name] -Algorithm SHA256).Hash){throw "ZIP mismatch at $name"}
         }
     } finally {$zip.Dispose()}
-    if([IO.File]::Exists($output)) {[IO.File]::Replace($part,$output,$null)}
+    if([IO.File]::Exists($output)) {[IO.File]::Replace($part,$output,[NullString]::Value)}
     else {[IO.File]::Move($part,$output)}
     Get-Item -LiteralPath $output
 } finally {

@@ -1,5 +1,6 @@
 #include "graphics_panel.hpp"
 #include "dlaa.hpp"
+#include "graphics_diagnostics.hpp"
 #include "dlss_runtime.hpp"
 #include "telemetry.hpp"
 #include <windows.h>
@@ -17,6 +18,7 @@ struct Graphics {
     std::string error,hook_error,last_measurement;
 };
 Graphics gfx;
+GraphicsDiagnosticClock diagnostic_clock;
 void close_handle(HANDLE &h) {if(h) CloseHandle(h);h=nullptr;}
 void log_graphics(const char *name,const std::string &message) {telemetry().write({name,message});}
 void launch_upgrade() {
@@ -98,6 +100,8 @@ void graphics_tick() {
         }
     }
     if(gfx.hook_error.empty()) apply_preference();
+    if(gfx.hook_started && diagnostic_clock.take(GetTickCount64()))
+        log_graphics("dlss_sample",graphics_diagnostic_text(dlaa_status(),GetTickCount64()));
     if(gfx.armed) {
         const auto state=dlaa_status();
         if(state.evaluated) {
